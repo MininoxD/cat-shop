@@ -9,6 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import CartItem from "@/components/product/cart-item";
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import { Transaction } from "@/domain/Transactions";
+import { v4 } from "uuid";
 
 interface Bank {
   bank_id: string;
@@ -28,6 +30,7 @@ export default function CartDetail({
   banks,
   isPaymentEnabled,
 }: CartDetailProps) {
+  const idTransaction = v4();
   const { items, getTotalItems, clearCart } = useCart();
   const [selectedBank, setSelectedBank] = useState<string>("");
   const listBanks = banks || [];
@@ -46,7 +49,7 @@ export default function CartDetail({
     }, 0);
   };
 
-  useEffect(() => { 
+  useEffect(() => {
     if (selectedBank && isPaymentEnabled) {
       const totalAmount = calculateTotal();
       const bankSelected = listBanks.find(
@@ -57,6 +60,47 @@ export default function CartDetail({
       }
     }
   }, [selectedBank]);
+
+  const saveTransactionInCookie = async () => {
+    const transaction: Transaction = {
+      id: idTransaction,
+      order: items.map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+      })),
+      bank_id: selectedBank,
+      created_at: new Date().toISOString(),
+      status: "pending",
+    };
+
+    if (typeof window !== "undefined") {
+      const cookieExists = document.cookie.includes("transactions=");
+      // valida si existe ya existe un valor en la cookie con transactions que sea un array
+      let existingTransactions = JSON.parse(
+        document.cookie.replace(
+          /(?:(?:^|.*;\s*)transactions\s*=\s*([^;]*).*$)|^.*$/,
+          "$1"
+        ) || "[]"
+      ) as Transaction[];
+      // Si no es un array, inicializa como un array vacío
+      if (!Array.isArray(existingTransactions)) {
+        existingTransactions = [];
+      }
+      // Agrega la nueva transacción al array
+      existingTransactions.push(transaction);
+      const maxAge = 86400;
+
+      if (!cookieExists) {
+        document.cookie = `transactions=${JSON.stringify(
+          existingTransactions
+        )}; path=/; max-age=${maxAge}; SameSite=Lax`;
+      } else {
+        document.cookie = `transactions=${JSON.stringify(
+          existingTransactions
+        )}; path=/; SameSite=Lax`;
+      }
+    }
+  };
 
   if (items.length === 0) {
     return (
@@ -182,10 +226,10 @@ export default function CartDetail({
                 href={{
                   pathname: "/process-payment",
                   query: {
-                    ids: items.map((item) => item.id),
-                    bank_id: selectedBank,
+                    id_transaction: idTransaction,
                   },
                 }}
+                onNavigate={() => saveTransactionInCookie()}
               >
                 <Button
                   className="w-full mt-4 cursor-pointer"

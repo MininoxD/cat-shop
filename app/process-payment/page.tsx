@@ -3,7 +3,6 @@ import {
   getProductService,
   initializeServices,
 } from "@/services/ServiceLocator";
-import { v4 } from "uuid";
 import {
   Card,
   CardContent,
@@ -23,29 +22,133 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-
+import { cookies } from "next/headers";
+import { Transaction } from "@/domain/Transactions";
+import UpdatePaymentPage from "@/components/payment/update-payment";
 export default async function ProcessPaymentPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    ids?: string[];
-    bank_id?: string;
+    id_transaction?: string;
   }>;
 }) {
   await initializeServices();
-  const { ids = [], bank_id } = await searchParams;
+  const cookieStore = await cookies();
+  const { id_transaction } = await searchParams;
+
+  const cookieTransactions = cookieStore.get("transactions");
+
+  if (!cookieTransactions || !cookieTransactions.value) {
+    console.error("No transactions cookie found");
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <Card className="text-center">
+          <CardHeader>
+            <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+              <Ban size={40} className="text-red-500" />
+            </div>
+            <CardTitle className="text-2xl mt-4">Error</CardTitle>
+          </CardHeader>
+          <CardContent className="text-gray-500">
+            <p>Transacción no encontrada</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const transactionData =
+    (JSON.parse(cookieTransactions.value) as Transaction[]) || [];
+
+  if (transactionData.length > 10) {
+    console.log("Exedio el límite de 5 transacciones");
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <Card className="text-center">
+          <CardHeader>
+            <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+              <Ban size={40} className="text-red-500" />
+            </div>
+            <CardTitle className="text-2xl mt-4">Error</CardTitle>
+          </CardHeader>
+          <CardContent className="text-gray-500">
+            <p>Excediste el límite de transacciones permitidas en 1 día.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const transaction = transactionData.find(
+    (transaction) => transaction.id === id_transaction
+  );
+
+  if (!transaction) {
+    console.error("Transaction not found in cookie");
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <Card className="text-center">
+          <CardHeader>
+            <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+              <Ban size={40} className="text-red-500" />
+            </div>
+            <CardTitle className="text-2xl mt-4">Error</CardTitle>
+          </CardHeader>
+          <CardContent className="text-gray-500">
+            <p>Transacción no encontrada</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (transaction.status === "completed") {
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <Card className="text-center">
+          <CardHeader>
+            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle size={40} className="text-green-500" />
+            </div>
+            <CardTitle className="text-2xl mt-4">
+              Tu pago ya fue procesado
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-gray-500">
+            <p>Tu pago ya ha sido completado exitosamente.</p>
+            <p className="mt-2">
+              Puedes verificar el estado de tu pago en cualquier momento usando
+              el ID proporcionado.
+            </p>
+            <Link
+              href={`/payment/${transaction?.payment_id}`}
+              className="mt-2 flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-md transition-colors"
+            >
+              Verificar estado del pago{" "}
+              <ArrowLeft size={16} className="rotate-180" />
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   const productService = getProductService();
   const products = await productService.getAll({
-    ids,
+    ids: transaction.order.map((item) => item.id),
   });
   const paymentService = getPaymentService();
   const banks = await paymentService.getBanks();
 
   const totalPrice = products.reduce(
-    (total, product) => total + product.price,
+    (total, product) =>
+      total +
+      product.price *
+        (transaction.order.find((item) => item.id === product.id)?.quantity ||
+          1),
     0
   );
-  const selectBank = banks.find((bank) => bank.bank_id === bank_id);
+  const selectBank = banks.find((bank) => bank.bank_id === transaction.bank_id);
 
   // Vista para banco no encontrado
   if (!selectBank) {
@@ -118,9 +221,7 @@ export default async function ProcessPaymentPage({
               </div>
               <p className="text-sm">
                 Monto mínimo:{" "}
-                <span className="font-bold">
-                  $ {selectBank.min_amount.toFixed(2)}
-                </span>
+                <span className="font-bold">$ {selectBank.min_amount}</span>
               </p>
             </div>
             <p className="mt-4">
@@ -145,16 +246,24 @@ export default async function ProcessPaymentPage({
     );
   }
 
-  // Procesar el pago
-  const paymentId = v4().toString();
   const paymentResponse = await paymentService.createPayment({
     amount: totalPrice,
     bank_id: selectBank.bank_id,
     subject: "Compra de productos",
     currency: "CLP",
-    transaction_id: paymentId,
+    transaction_id: transaction.id,
   });
-  // Vista de pago exitoso
+
+  const updatedStatusTransaction: Transaction = {
+    ...transaction,
+    payment_id: paymentResponse.payment_id,
+    status: "completed",
+  };
+
+  const restTransactions = transactionData.filter(
+    (transaction) => transaction.id !== id_transaction
+  );
+  const updatedTransactions = [...restTransactions, updatedStatusTransaction];
   return (
     <div className="max-w-md mx-auto py-12 px-4">
       <Card className="text-center">
@@ -222,24 +331,8 @@ export default async function ProcessPaymentPage({
             </div>
           </div>
         </CardContent>
-        <CardFooter className="flex justify-center gap-4">
-          <Link
-            href={{
-              pathname: "/cart",
-            }}
-          >
-            <Button variant="outline" className="flex items-center gap-2">
-              <ArrowLeft size={16} />
-              Volver al carrito
-            </Button>
-          </Link>
-          <Link
-            href={{
-              pathname: "/",
-            }}
-          >
-            <Button>Seguir comprando</Button>
-          </Link>
+        <CardFooter className="flex flex-col">
+          <UpdatePaymentPage transactions={updatedTransactions} />
         </CardFooter>
       </Card>
     </div>
